@@ -20,6 +20,9 @@ pub enum Kind {
     Lightpanda,
     Obscura,
     ObscuraStealth,
+    /// In-process, so it has no process launch and no CDP endpoint. The path is
+    /// a cfsolve profile, not a binary.
+    Cfsolve,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +46,7 @@ impl FromStr for EngineSpec {
             "lightpanda" => Kind::Lightpanda,
             "obscura" => Kind::Obscura,
             "obscura-stealth" => Kind::ObscuraStealth,
+            "cfsolve" => Kind::Cfsolve,
             _ => bail!("unknown engine {name}"),
         };
         Ok(Self {
@@ -104,6 +108,12 @@ pub fn launch_plan(
         Kind::Obscura | Kind::ObscuraStealth => LaunchPlan {
             program: path,
             args: obscura_args(spec.kind, port, options),
+            env: Vec::new(),
+        },
+        // Never launched; `cfsolve_attempt` runs it inside this process.
+        Kind::Cfsolve => LaunchPlan {
+            program: path,
+            args: Vec::new(),
             env: Vec::new(),
         },
     }
@@ -284,6 +294,20 @@ mod tests {
         assert_eq!(parsed.name, "headless-shell");
         assert_eq!(parsed.kind, Kind::HeadlessShell);
         assert_eq!(parsed.path, PathBuf::from("/opt/chs"));
+    }
+
+    #[test]
+    fn parses_a_cfsolve_profile_as_the_path() {
+        let parsed: EngineSpec = "cfsolve:/profiles/x.json".parse().unwrap();
+        assert_eq!(parsed.kind, Kind::Cfsolve);
+        assert_eq!(parsed.path, PathBuf::from("/profiles/x.json"));
+    }
+
+    #[test]
+    fn cfsolve_launches_nothing() {
+        let plan = plan(Kind::Cfsolve, &LaunchOptions::default());
+        assert_eq!(plan.program, "/bin/engine");
+        assert!(plan.args.is_empty());
     }
 
     #[test]

@@ -25,6 +25,7 @@ pub struct AppState {
     pub header_order: Vec<String>,
     pub limits: Limits,
     pub version: String,
+    pub inflight: Arc<tokio::sync::Semaphore>,
 }
 
 pub fn app(state: Arc<AppState>) -> Router {
@@ -183,20 +184,16 @@ async fn v1(State(state): State<Arc<AppState>>, Json(request): Json<V1Request>) 
     }
 }
 
-async fn request_page(
-    state: &AppState,
-    request: V1Request,
-    reply: Reply,
-) -> Json<Envelope> {
+async fn request_page(state: &AppState, request: V1Request, reply: Reply) -> Json<Envelope> {
     let Some(url) = request.url.clone() else {
         return reply.error(state, "Missing url");
     };
     let timeout = state
         .limits
         .default_timeout
-        .min(Duration::from_millis(request.max_timeout.unwrap_or_else(|| {
-            state.limits.default_timeout.as_millis() as u64
-        })))
+        .min(Duration::from_millis(request.max_timeout.unwrap_or_else(
+            || state.limits.default_timeout.as_millis() as u64,
+        )))
         .min(state.limits.max_timeout);
 
     let proxy = match request.proxy.as_ref().map(|proxy| proxy::Input {
@@ -232,7 +229,11 @@ async fn request_page(
         let content_type = request
             .headers
             .as_ref()
-            .and_then(|headers| headers.get("content-type").or_else(|| headers.get("Content-Type")))
+            .and_then(|headers| {
+                headers
+                    .get("content-type")
+                    .or_else(|| headers.get("Content-Type"))
+            })
             .and_then(|value| value.as_str())
             .unwrap_or("application/x-www-form-urlencoded")
             .to_string();
@@ -240,11 +241,17 @@ async fn request_page(
             Ok(fetcher) => fetcher,
             Err(error) => return reply.error(state, error.to_string()),
         };
-        let page = match fetcher.post(&url, &body_text, &content_type, &cookies, target.deadline).await {
+        let page = match fetcher
+            .post(&url, &body_text, &content_type, &cookies, target.deadline)
+            .await
+        {
             Ok(page) => page,
             Err(error) => return reply.error(state, error.to_string()),
         };
-        return reply.ok(state, Some(solution(state, page.url, page.status, page.body, cookies)));
+        return reply.ok(
+            state,
+            Some(solution(state, page.url, page.status, page.body, cookies)),
+        );
     }
 
     reply.ok(state, Some(solution(state, url, status, body, cookies)))
@@ -296,11 +303,26 @@ async fn obtain(state: &AppState, target: &Target, key: &str) -> Result<Page, So
     }
 }
 
-async fn solve(state: &AppState, target: &Target, key: &str) -> Result<Vec<NamedCookie>, SolveError> {
+async fn solve(
+    state: &AppState,
+    target: &Target,
+    key: &str,
+) -> Result<Vec<NamedCookie>, SolveError> {
+    let _permit = state
+        .inflight
+        .acquire()
+        .await
+        .map_err(|error| SolveError::Network(error.to_string()))?;
     let expires = Instant::now() + Duration::from_secs(30 * 60);
     state
         .cache
-        .get_or_solve(state.solver.as_ref(), key, clone_target(target), expires, state.limits.max_solve)
+        .get_or_solve(
+            state.solver.as_ref(),
+            key,
+            clone_target(target),
+            expires,
+            state.limits.max_solve,
+        )
         .await
 }
 
@@ -312,7 +334,11 @@ fn clone_target(target: &Target) -> Target {
     }
 }
 
-async fn fetch(state: &AppState, target: &Target, cookies: &[NamedCookie]) -> Result<Page, SolveError> {
+async fn fetch(
+    state: &AppState,
+    target: &Target,
+    cookies: &[NamedCookie],
+) -> Result<Page, SolveError> {
     let fetcher = state
         .fetcher(target.proxy.as_deref())
         .map_err(|error| SolveError::Network(error.to_string()))?;
@@ -334,7 +360,13 @@ impl AppState {
     }
 }
 
-fn solution(state: &AppState, url: String, status: u16, body: String, cookies: Vec<NamedCookie>) -> Solution {
+fn solution(
+    state: &AppState,
+    url: String,
+    status: u16,
+    body: String,
+    cookies: Vec<NamedCookie>,
+) -> Solution {
     Solution {
         url,
         status: status.to_string(),

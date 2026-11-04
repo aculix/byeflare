@@ -38,7 +38,10 @@ impl Cache {
     }
 
     pub async fn insert(&self, key: String, cookies: Vec<NamedCookie>, expires: Instant) {
-        self.entries.lock().await.put(key, Entry { cookies, expires });
+        self.entries
+            .lock()
+            .await
+            .put(key, Entry { cookies, expires });
     }
 
     pub async fn invalidate(&self, key: &str) {
@@ -149,7 +152,11 @@ mod tests {
     async fn expired_entries_miss() {
         let cache = Cache::new(8);
         cache
-            .insert("k".into(), cookies(), Instant::now() - Duration::from_secs(1))
+            .insert(
+                "k".into(),
+                cookies(),
+                Instant::now() - Duration::from_secs(1),
+            )
             .await;
         assert_eq!(cache.get("k").await, None);
     }
@@ -189,7 +196,10 @@ mod tests {
     #[tokio::test]
     async fn a_failure_reaches_the_caller() {
         let calls = Arc::new(AtomicUsize::new(0));
-        let solver = Counting(calls.clone(), Err(SolveError::Unsupported("new build".into())));
+        let solver = Counting(
+            calls.clone(),
+            Err(SolveError::Unsupported("new build".into())),
+        );
         let cache = Cache::new(8);
         let error = cache
             .get_or_solve(&solver, "k", target(), later(), Duration::from_secs(5))

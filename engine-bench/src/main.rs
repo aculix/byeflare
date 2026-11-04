@@ -157,8 +157,11 @@ async fn run(args: RunArgs) -> Result<()> {
                 };
                 for spec in &args.engines {
                     let label = exits::label(&spec.name, &exit.name);
-                    let record =
-                        bench::engine_attempt(spec, &label, target, round, &settings).await;
+                    let record = if spec.kind == engine::Kind::Cfsolve {
+                        bench::cfsolve_attempt(spec, &label, target, round, &settings).await
+                    } else {
+                        bench::engine_attempt(spec, &label, target, round, &settings).await
+                    };
                     println!(
                         "round {round} {label} {target}: {:?} {:?}",
                         record.outcome, record.note

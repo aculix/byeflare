@@ -2,7 +2,7 @@
 //! real site, so it says nothing about whether an engine passes Cloudflare.
 
 use crate::bench::{self, Settings};
-use crate::engine::{EngineSpec, LaunchOptions};
+use crate::engine::{EngineSpec, Kind, LaunchOptions};
 use crate::mock;
 use crate::outcome::Outcome;
 use crate::proxy::{self, Upstream};
@@ -58,6 +58,10 @@ pub async fn run(engines: &[EngineSpec], no_sandbox: bool, timeout: Duration) ->
     let mut mismatches = 0;
     for spec in engines {
         println!("\n## {}\n", spec.name);
+        if spec.kind == Kind::Cfsolve {
+            println!("cfsolve runs no browser, so there is nothing to probe. Check it with `run`.");
+            continue;
+        }
         println!("| Scenario | Expected | Actual | Replay | Solve | Peak memory | CPU | Startup |");
         println!("|---|---|---|---|---|---|---|---|");
         for (path, expected, replay) in SCENARIOS {

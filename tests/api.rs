@@ -63,6 +63,7 @@ fn state(solver: Arc<dyn Solver>, cache: Cache) -> Arc<AppState> {
             max_solve: Duration::from_secs(2),
         },
         version: "test".into(),
+        inflight: Arc::new(tokio::sync::Semaphore::new(4)),
     })
 }
 
@@ -145,7 +146,14 @@ async fn ping_answers_get_and_post() {
     let (solver, _) = fake(Behaviour::Solve);
     let url = start(solver, Cache::new(8)).await;
     let client = wreq::Client::new();
-    let get = client.get(format!("{url}/ping")).send().await.unwrap().json::<serde_json::Value>().await.unwrap();
+    let get = client
+        .get(format!("{url}/ping"))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
     assert_eq!(get["status"], "ok");
     let post = client
         .post(format!("{url}/ping"))

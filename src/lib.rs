@@ -1,5 +1,6 @@
 pub mod api;
 pub mod cache;
+pub mod config;
 pub mod detect;
 pub mod domain;
 pub mod fetch;

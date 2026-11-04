@@ -23,7 +23,9 @@ mod tests {
             "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/x"
         ));
         assert!(is_challenged("<div class=\"cf-turnstile\"></div>"));
-        assert!(is_challenged("<script src=\"/cdn-cgi/challenge-platform/x\"></script>"));
+        assert!(is_challenged(
+            "<script src=\"/cdn-cgi/challenge-platform/x\"></script>"
+        ));
     }
 
     #[test]

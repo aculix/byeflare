@@ -15,7 +15,11 @@ pub struct Snapshot {
 }
 
 impl Fetcher {
-    pub fn new(user_agent: String, header_order: Vec<String>, proxy: Option<&str>) -> anyhow::Result<Self> {
+    pub fn new(
+        user_agent: String,
+        header_order: Vec<String>,
+        proxy: Option<&str>,
+    ) -> anyhow::Result<Self> {
         let mut builder = wreq::Client::builder()
             .redirect(wreq::redirect::Policy::limited(5))
             .timeout(std::time::Duration::from_secs(60));
@@ -29,33 +33,62 @@ impl Fetcher {
         })
     }
 
-    fn request(&self, method: wreq::Method, url: &str, cookies: &[NamedCookie], deadline: Instant) -> anyhow::Result<wreq::RequestBuilder> {
+    fn request(
+        &self,
+        method: wreq::Method,
+        url: &str,
+        cookies: &[NamedCookie],
+        deadline: Instant,
+    ) -> anyhow::Result<wreq::RequestBuilder> {
         let remaining = deadline.saturating_duration_since(Instant::now());
         let mut builder = self.client.request(method, url).timeout(remaining);
         builder = builder.header(wreq::header::USER_AGENT, &self.user_agent);
-        for name in &self.header_order {
-            if name.eq_ignore_ascii_case("user-agent") || name.eq_ignore_ascii_case("cookie") {
+        for entry in &self.header_order {
+            let (name, value) = match entry.split_once(": ") {
+                Some((name, value)) => (name, Some(value)),
+                None => (entry.as_str(), None),
+            };
+            let skip = ["user-agent", "cookie", "accept-encoding", "referer"]
+                .iter()
+                .any(|skipped| name.eq_ignore_ascii_case(skipped));
+            if skip {
                 continue;
             }
-            // The value comes from the profile only for the user agent; the rest are
-            // left to the client unless the profile names them and we have a value.
-            if name.eq_ignore_ascii_case("accept") {
-                builder = builder.header(wreq::header::ACCEPT, "*/*");
-            }
+            let Some(value) = value else { continue };
+            builder = builder.header(name, value);
         }
         if !cookies.is_empty() {
-            let joined = cookies.iter().map(|cookie| format!("{}={}", cookie.name, cookie.value)).collect::<Vec<_>>().join("; ");
+            let joined = cookies
+                .iter()
+                .map(|cookie| format!("{}={}", cookie.name, cookie.value))
+                .collect::<Vec<_>>()
+                .join("; ");
             builder = builder.header(wreq::header::COOKIE, joined);
         }
         Ok(builder)
     }
 
-    pub async fn get(&self, url: &str, cookies: &[NamedCookie], deadline: Instant) -> anyhow::Result<Snapshot> {
-        let response = self.request(wreq::Method::GET, url, cookies, deadline)?.send().await?;
+    pub async fn get(
+        &self,
+        url: &str,
+        cookies: &[NamedCookie],
+        deadline: Instant,
+    ) -> anyhow::Result<Snapshot> {
+        let response = self
+            .request(wreq::Method::GET, url, cookies, deadline)?
+            .send()
+            .await?;
         snapshot(response, url).await
     }
 
-    pub async fn post(&self, url: &str, body: &str, content_type: &str, cookies: &[NamedCookie], deadline: Instant) -> anyhow::Result<Snapshot> {
+    pub async fn post(
+        &self,
+        url: &str,
+        body: &str,
+        content_type: &str,
+        cookies: &[NamedCookie],
+        deadline: Instant,
+    ) -> anyhow::Result<Snapshot> {
         let response = self
             .request(wreq::Method::POST, url, cookies, deadline)?
             .header(wreq::header::CONTENT_TYPE, content_type)
@@ -69,7 +102,11 @@ impl Fetcher {
 async fn snapshot(response: wreq::Response, url: &str) -> anyhow::Result<Snapshot> {
     let status = response.status().as_u16();
     let body = response.text().await?;
-    Ok(Snapshot { url: url.to_string(), status, body })
+    Ok(Snapshot {
+        url: url.to_string(),
+        status,
+        body,
+    })
 }
 
 #[cfg(test)]
@@ -90,9 +127,21 @@ mod tests {
 
     async fn echo(State(seen): State<Arc<Mutex<Seen>>>, request: axum::extract::Request) -> String {
         let method = request.method().to_string();
-        let user_agent = request.headers().get("user-agent").map(|v| v.to_str().unwrap_or("")).unwrap_or("").to_string();
-        let cookie = request.headers().get("cookie").map(|v| v.to_str().unwrap_or("")).unwrap_or("").to_string();
-        let body = axum::body::to_bytes(request.into_body(), 1 << 20).await.unwrap();
+        let user_agent = request
+            .headers()
+            .get("user-agent")
+            .map(|v| v.to_str().unwrap_or(""))
+            .unwrap_or("")
+            .to_string();
+        let cookie = request
+            .headers()
+            .get("cookie")
+            .map(|v| v.to_str().unwrap_or(""))
+            .unwrap_or("")
+            .to_string();
+        let body = axum::body::to_bytes(request.into_body(), 1 << 20)
+            .await
+            .unwrap();
         let mut seen = seen.lock().unwrap();
         seen.method = method;
         seen.user_agent = user_agent;
@@ -144,7 +193,16 @@ mod tests {
         let seen = Arc::new(Mutex::new(Seen::default()));
         let url = serve(seen.clone()).await;
         let fetcher = Fetcher::new("agent/1".into(), vec![], None).unwrap();
-        fetcher.post(&url, "q=x", "application/x-www-form-urlencoded", &cookies(), deadline()).await.unwrap();
+        fetcher
+            .post(
+                &url,
+                "q=x",
+                "application/x-www-form-urlencoded",
+                &cookies(),
+                deadline(),
+            )
+            .await
+            .unwrap();
         let seen = seen.lock().unwrap();
         assert_eq!(seen.method, "POST");
         assert_eq!(seen.body, "q=x");

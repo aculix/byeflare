@@ -5013,6 +5013,8 @@ dependencies = [
  "lru 0.18.5",
  "percent-encoding",
  "pin-project-lite",
+ "serde",
+ "serde_json",
  "socket2",
  "tokio",
  "tokio-btls",

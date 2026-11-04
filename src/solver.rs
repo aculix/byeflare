@@ -58,7 +58,11 @@ impl Solver for CfsolveSolver {
             proxy: target.proxy.clone(),
             sink: None,
         };
-        let clearance = self.browser.clear(&url, &options).await.map_err(map_error)?;
+        let clearance = self
+            .browser
+            .clear(&url, &options)
+            .await
+            .map_err(map_error)?;
         let cookies = clearance
             .cookies
             .into_iter()

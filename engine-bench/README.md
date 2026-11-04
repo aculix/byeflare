@@ -6,13 +6,22 @@ Run it on the server Prowlarr uses. Cloudflare's decision depends on the IP addr
 
 ## Run it on your server
 
-Copy this folder to the server, then run these from inside it.
+Copy the repository to the server (this folder depends on the parent crate), then run these from its root.
 
 Build the image. It builds natively on `linux/amd64` or `linux/arm64`, and installs Chromium, `chromium-headless-shell` and Lightpanda:
 
 ```bash
-docker build -t engine-bench .
+docker build -f engine-bench/Dockerfile -t engine-bench .
 ```
+
+The image also carries the pinned cfsolve profile:
+
+```bash
+--engine cfsolve:/usr/local/share/cfsolve/profiles/safari-26-ios.json
+```
+
+cfsolve runs inside the harness process, with no browser and no launch step. It
+takes no `--no-sandbox`, and its memory figures cover the whole harness process.
 
 Check that everything works on the built-in mock. This touches no real site:
 
@@ -52,7 +61,7 @@ If Prowlarr reaches the internet through a VPN container, swap `--network host` 
 
 ## Run it on Easypanel
 
-1. Create an **App** service, choose the **Upload** source and upload `engine-bench.zip`. The `Dockerfile` sits at the top of the archive, so Easypanel should pick the Dockerfile builder by itself.
+1. Create an **App** service, choose the **Upload** source and upload a zip of the repository root. Set the Dockerfile path to `engine-bench/Dockerfile` in the build settings.
 2. Deploy it with the command override left empty. The container just idles and touches no site until you start a test, and its logs show `Waiting idle`.
 
    Don't set `run` as the command. Easypanel restarts services that exit, so it would hit your indexers over and over from Prowlarr's IP.
@@ -156,6 +165,7 @@ Obscura isn't bundled. Its binaries come from a pseudonymous personal account, s
 ## What it doesn't do
 
 - Engines run with stock settings. There are no stealth patches, and nothing clicks a widget.
+- cfsolve is not checked by `selftest`; it has no browser surface to probe. Use `run`.
 - The replay uses Rust's TLS stack, while Prowlarr uses .NET's. Cloudflare could treat them differently, so confirm any winner in Prowlarr itself.
 - Memory is PSS on Linux. On macOS it is summed RSS, which counts shared pages more than once and overstates multi-process browsers.
 - Each attempt starts a fresh engine, so these are cold-start numbers.

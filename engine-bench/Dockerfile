@@ -1,10 +1,17 @@
+# Build from the repository root: docker build -f engine-bench/Dockerfile .
 # Builds natively for linux/amd64 or linux/arm64.
-FROM rust:1-slim-trixie AS build
-RUN apt-get update && apt-get install -y --no-install-recommends cmake g++ make pkg-config
+FROM rust:1.98.0-slim-trixie AS build
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends cmake g++ make pkg-config clang libclang-dev git \
+ && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY src ./src
-RUN cargo build --release
+COPY engine-bench/Cargo.toml ./engine-bench/Cargo.toml
+COPY engine-bench/src ./engine-bench/src
+COPY scripts ./scripts
+RUN ./scripts/fetch-cfsolve.sh
+RUN cargo build --release -p engine-bench
 
 # Lightpanda 1.0.2, pinned by digest. Both architectures' binaries match the
 # checksums published with its GitHub release.
@@ -20,6 +27,8 @@ RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
 
 COPY --from=lightpanda /usr/bin/lightpanda /usr/local/bin/lightpanda
 COPY --from=build /src/target/release/engine-bench /usr/local/bin/engine-bench
+COPY --from=build /src/vendor/cfsolve/profiles/safari-26-ios.json /usr/local/share/cfsolve/profiles/safari-26-ios.json
+COPY --from=build /src/vendor/cfsolve/profiles/safari-26-ios /usr/local/share/cfsolve/profiles/safari-26-ios
 ENV HOME=/tmp
 ENTRYPOINT ["engine-bench"]
 # Hosted services restart anything that exits, so the default does nothing.

@@ -10,6 +10,8 @@ use crate::outcome::Outcome;
 use crate::replay::{self, Cookie};
 use crate::report::AttemptRecord;
 use anyhow::{Context, Result};
+use byeflare::domain::{SolveError, Target};
+use byeflare::solver::{CfsolveSolver, Solver};
 use serde_json::Value;
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
@@ -109,8 +111,91 @@ pub async fn baseline_attempt(
     record
 }
 
+/// Runs cfsolve inside this process; its path is a profile, not a binary.
+pub async fn cfsolve_attempt(
+    spec: &EngineSpec,
+    label: &str,
+    target: &str,
+    round: u32,
+    settings: &Settings,
+) -> AttemptRecord {
+    let mut record = AttemptRecord::failed(label, target, round);
+
+    let started = Instant::now();
+    let solver = match CfsolveSolver::load(&spec.path) {
+        Ok(solver) => solver,
+        Err(error) => {
+            record.note = Some(format!("{error:#}"));
+            return record;
+        }
+    };
+    record.startup_ms = Some(started.elapsed().as_millis() as u64);
+    let user_agent = solver.user_agent().to_string();
+    let target_spec = Target {
+        url: target.to_string(),
+        proxy: settings.options.proxy.clone(),
+        deadline: Instant::now() + settings.timeout,
+    };
+
+    // cfsolve runs in this process, so the group to watch is our own.
+    // SAFETY: `getpgrp` takes no arguments and cannot fail.
+    let sampler = Sampler::start(unsafe { libc::getpgrp() } as u32);
+    let started = Instant::now();
+    let result = timeout(settings.timeout, solver.clear(&target_spec)).await;
+    let (peak_mb, cpu_seconds) = sampler.finish().await;
+    record.peak_mb = Some(peak_mb);
+    record.cpu_seconds = Some(cpu_seconds);
+    record.solve_ms = Some(started.elapsed().as_millis() as u64);
+
+    let proxy = settings.options.proxy.as_deref();
+    match result {
+        Err(_) => {
+            record.note = Some(format!(
+                "no clearance within {}s",
+                settings.timeout.as_secs()
+            ))
+        }
+        Ok(Ok(cleared)) => {
+            record.outcome = Outcome::Cleared;
+            let cookies: Vec<Cookie> = cleared
+                .cookies
+                .iter()
+                .map(|cookie| Cookie {
+                    name: cookie.name.clone(),
+                    value: cookie.value.clone(),
+                })
+                .collect();
+            apply_replay(&mut record, target, &cookies, Some(&user_agent), proxy).await;
+        }
+        Ok(Err(error)) => match error {
+            SolveError::NotChallenged => {
+                record.outcome = Outcome::NoChallenge;
+                apply_replay(&mut record, target, &[], Some(&user_agent), proxy).await;
+            }
+            SolveError::Blocked(status) => {
+                record.outcome = Outcome::Blocked;
+                record.note = Some(format!("replay target answered HTTP {status}"));
+            }
+            SolveError::Challenged(status) => {
+                record.outcome = Outcome::ChallengeTimeout;
+                record.note = Some(format!("still challenged, HTTP {status}"));
+            }
+            SolveError::Rejected(message) => {
+                record.outcome = Outcome::ChallengeTimeout;
+                record.note = Some(format!("rejected: {message}"));
+            }
+            SolveError::Network(message) => record.note = Some(format!("network: {message}")),
+            SolveError::Unsupported(message) => {
+                record.note = Some(format!("unsupported: {message}"))
+            }
+            SolveError::Config(message) => record.note = Some(format!("config: {message}")),
+        },
+    }
+    record
+}
+
 /// Fills in whether Prowlarr's own replay would have worked.
-async fn apply_replay(
+pub async fn apply_replay(
     record: &mut AttemptRecord,
     target: &str,
     cookies: &[Cookie],
