@@ -7,6 +7,7 @@ publish = false
 
 [dependencies]
 anyhow = "1.0.104"
+byeflare = { path = ".." }
 axum = "0.8.9"
 base64 = "0.23.1"
 clap = { version = "4.6.7", features = ["derive"] }
