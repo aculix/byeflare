@@ -142,6 +142,36 @@ async fn call(url: &str, body: serde_json::Value) -> serde_json::Value {
 }
 
 #[tokio::test]
+async fn the_root_says_it_is_running() {
+    let (solver, _) = fake(Behaviour::Solve);
+    let url = start(solver, Cache::new(8)).await;
+    let response = wreq::Client::new().get(&url).send().await.unwrap();
+    assert_eq!(response.status(), 200);
+}
+
+/// Prowlarr's proxy validation sends `proxy: {}` when no proxy is configured,
+/// and `headers: null` for GET.
+#[tokio::test]
+async fn prowlarr_validation_body_is_accepted() {
+    let target = origin().await;
+    let (solver, _) = fake(Behaviour::Solve);
+    let url = start(solver, Cache::new(8)).await;
+    let response = call(
+        &url,
+        serde_json::json!({
+            "cmd": "request.get",
+            "url": target,
+            "cookies": null,
+            "proxy": {},
+            "headers": null,
+            "maxTimeout": 60000
+        }),
+    )
+    .await;
+    assert_eq!(response["status"], "ok");
+}
+
+#[tokio::test]
 async fn ping_answers_get_and_post() {
     let (solver, _) = fake(Behaviour::Solve);
     let url = start(solver, Cache::new(8)).await;

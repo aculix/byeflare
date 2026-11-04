@@ -31,6 +31,7 @@ pub struct AppState {
 pub fn app(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/ping", get(ping).post(ping))
+        .route("/", get(index))
         .route("/v1", post(v1))
         .with_state(state)
 }
@@ -50,7 +51,8 @@ struct V1Request {
 
 #[derive(Deserialize)]
 struct ProxyInput {
-    url: String,
+    #[serde(default)]
+    url: Option<String>,
     username: Option<String>,
     password: Option<String>,
 }
@@ -157,6 +159,10 @@ fn millis() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|since| since.as_millis())
         .unwrap_or(0)
+}
+
+async fn index() -> &'static str {
+    "byeflare is running. POST /v1, or GET /ping for health.\n"
 }
 
 async fn ping(State(state): State<Arc<AppState>>) -> Json<Envelope> {

@@ -11,8 +11,8 @@ pub fn map_error(error: cfsolve::Error) -> SolveError {
     match error {
         E::NotChallenged => SolveError::NotChallenged,
         E::Blocked { status } => SolveError::Blocked(status.as_u16()),
-        E::Network(error) => SolveError::Network(error.to_string()),
-        E::Rejected { error, .. } => SolveError::Rejected(error.to_string()),
+        E::Network(error) => SolveError::Network(format!("{error:#}")),
+        E::Rejected { error, .. } => SolveError::Rejected(format!("{error:#}")),
         E::Challenged { status } => SolveError::Challenged(status.as_u16()),
         E::Unsupported(error) => SolveError::Unsupported(error.to_string()),
         E::Config(error) => SolveError::Config(error.to_string()),
