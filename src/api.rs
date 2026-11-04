@@ -209,7 +209,10 @@ async fn request_page(state: &AppState, request: V1Request, reply: Reply) -> Jso
     }) {
         Some(input) => match proxy::resolve(Some(&input)) {
             Ok(proxy) => proxy,
-            Err(error) => return reply.error(state, error.to_string()),
+            Err(error) => {
+                log(&url, &error.to_string());
+                return reply.error(state, error.to_string());
+            }
         },
         None => None,
     };
@@ -225,10 +228,14 @@ async fn request_page(state: &AppState, request: V1Request, reply: Reply) -> Jso
         deadline: Instant::now() + timeout,
     };
 
-    let (status, body, cookies) = match obtain(state, &target, &key).await {
+    let (status, body, mut cookies) = match obtain(state, &target, &key).await {
         Ok(page) => (page.status, page.body, page.cookies),
-        Err(error) => return reply.error(state, describe(&error)),
+        Err(error) => {
+            log(&url, &describe(&error));
+            return reply.error(state, describe(&error));
+        }
     };
+    ensure_cookies(&mut cookies, &host);
 
     if request.cmd == "request.post" {
         let body_text = request.post_data.clone().unwrap_or_default();
@@ -252,8 +259,12 @@ async fn request_page(state: &AppState, request: V1Request, reply: Reply) -> Jso
             .await
         {
             Ok(page) => page,
-            Err(error) => return reply.error(state, error.to_string()),
+            Err(error) => {
+                log(&url, &error.to_string());
+                return reply.error(state, error.to_string());
+            }
         };
+        let cookies = merge(&cookies, page.set_cookies);
         return reply.ok(
             state,
             Some(solution(state, page.url, page.status, page.body, cookies)),
@@ -356,8 +367,38 @@ async fn fetch(
         url: page.url,
         status: page.status,
         body: page.body,
-        cookies: Vec::new(),
+        cookies: merge(cookies, page.set_cookies),
     })
+}
+
+/// Keeps the cookies we sent and lets the page's own values win by name.
+fn merge(used: &[NamedCookie], set: Vec<NamedCookie>) -> Vec<NamedCookie> {
+    let mut merged = used.to_vec();
+    for cookie in set {
+        match merged
+            .iter_mut()
+            .find(|existing| existing.name == cookie.name)
+        {
+            Some(existing) => *existing = cookie,
+            None => merged.push(cookie),
+        }
+    }
+    merged
+}
+
+/// Prowlarr rejects a solve with no cookies outright, so never send an empty set.
+fn ensure_cookies(cookies: &mut Vec<NamedCookie>, host: &str) {
+    if cookies.is_empty() {
+        cookies.push(NamedCookie {
+            name: "byeflare".into(),
+            value: "1".into(),
+            domain: host.to_string(),
+            path: "/".into(),
+            expires: None,
+            http_only: false,
+            secure: true,
+        });
+    }
 }
 
 impl AppState {
@@ -381,6 +422,11 @@ fn solution(
         cookies: cookies.into_iter().map(CookieOut::from).collect(),
         user_agent: state.user_agent.clone(),
     }
+}
+
+/// Prowlarr only shows a generic message, so failures go to the container log.
+fn log(url: &str, message: &str) {
+    eprintln!("byeflare: {url}: {message}");
 }
 
 fn describe(error: &SolveError) -> String {

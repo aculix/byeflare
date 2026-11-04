@@ -85,5 +85,9 @@ profile before touching the service design.
 - `POST /v1` → FlareSolverr envelope with `solution.cookies`, `solution.userAgent`,
   `solution.response`
 
-Errors come back as `{"status":"error","message":"..."}`, which Prowlarr surfaces
-as an indexer failure.
+Errors come back as `{"status":"error","message":"..."}` with HTTP 200. Prowlarr
+only shows a generic message, so every failure is also printed to the container
+log as `byeflare: <url>: <reason>` — check there with `docker logs`.
+
+Cookies set by the page are passed through, and a solve always carries at least
+one cookie, because Prowlarr rejects an empty set outright.

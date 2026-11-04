@@ -113,6 +113,58 @@ async fn origin_echo() -> String {
     format!("http://{address}/")
 }
 
+/// A page with no challenge, that may set a cookie.
+async fn origin_plain(set_cookie: Option<&'static str>) -> String {
+    async fn handler(State(set_cookie): State<Option<&'static str>>) -> axum::response::Response {
+        use axum::response::IntoResponse;
+        let mut response = "plain".into_response();
+        if let Some(cookie) = set_cookie {
+            response
+                .headers_mut()
+                .insert(axum::http::header::SET_COOKIE, cookie.parse().unwrap());
+        }
+        response
+    }
+    let app = axum::Router::new()
+        .fallback(any(handler))
+        .with_state(set_cookie);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    format!("http://{address}/")
+}
+
+/// Prowlarr throws "Empty cookies returned by FlareSolverr" on an empty set.
+#[tokio::test]
+async fn an_unchallenged_page_still_returns_a_cookie() {
+    let target = origin_plain(None).await;
+    let (solver, _) = fake(Behaviour::Fail(SolveError::NotChallenged));
+    let url = start(solver, Cache::new(8)).await;
+    let response = call(
+        &url,
+        serde_json::json!({"cmd": "request.get", "url": target, "maxTimeout": 5000}),
+    )
+    .await;
+    assert_eq!(response["status"], "ok");
+    assert_eq!(response["solution"]["response"], "plain");
+    assert_eq!(response["solution"]["cookies"][0]["name"], "byeflare");
+}
+
+#[tokio::test]
+async fn a_cookie_set_by_the_page_is_returned() {
+    let target = origin_plain(Some("cf_clearance=live; Path=/; Domain=host")).await;
+    let (solver, _) = fake(Behaviour::Fail(SolveError::NotChallenged));
+    let url = start(solver, Cache::new(8)).await;
+    let response = call(
+        &url,
+        serde_json::json!({"cmd": "request.get", "url": target, "maxTimeout": 5000}),
+    )
+    .await;
+    assert_eq!(response["status"], "ok");
+    assert_eq!(response["solution"]["cookies"][0]["name"], "cf_clearance");
+    assert_eq!(response["solution"]["cookies"][0]["value"], "live");
+}
+
 async fn start(solver: Arc<dyn Solver>, cache: Cache) -> String {
     let app = app(state(solver, cache));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

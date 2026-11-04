@@ -12,6 +12,8 @@ pub struct Snapshot {
     pub url: String,
     pub status: u16,
     pub body: String,
+    /// Cookies the page set, which may include a clearance Prowlarr can replay.
+    pub set_cookies: Vec<NamedCookie>,
 }
 
 impl Fetcher {
@@ -101,11 +103,32 @@ impl Fetcher {
 
 async fn snapshot(response: wreq::Response, url: &str) -> anyhow::Result<Snapshot> {
     let status = response.status().as_u16();
+    let host = url
+        .parse::<wreq::Uri>()
+        .ok()
+        .and_then(|url| url.host().map(str::to_string))
+        .unwrap_or_default();
+    let set_cookies = response
+        .cookies()
+        .map(|cookie| NamedCookie {
+            name: cookie.name().to_string(),
+            value: cookie.value().to_string(),
+            domain: cookie.domain().unwrap_or(&host).to_string(),
+            path: cookie.path().unwrap_or("/").to_string(),
+            expires: cookie
+                .expires()
+                .and_then(|expires| expires.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|since| since.as_secs_f64()),
+            http_only: cookie.http_only(),
+            secure: cookie.secure(),
+        })
+        .collect();
     let body = response.text().await?;
     Ok(Snapshot {
         url: url.to_string(),
         status,
         body,
+        set_cookies,
     })
 }
 
@@ -186,6 +209,36 @@ mod tests {
         assert_eq!(seen.method, "GET");
         assert_eq!(seen.user_agent, "agent/1");
         assert_eq!(seen.cookie, "cf_clearance=v");
+    }
+
+    async fn cookie_server(header: &'static str) -> String {
+        async fn handler(
+            axum::extract::State(header): axum::extract::State<&'static str>,
+        ) -> axum::response::Response {
+            use axum::response::IntoResponse;
+            ([(axum::http::header::SET_COOKIE, header)], "ok").into_response()
+        }
+        let app = axum::Router::new()
+            .fallback(any(handler))
+            .with_state(header);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        format!("http://{address}/")
+    }
+
+    #[tokio::test]
+    async fn set_cookie_headers_are_captured() {
+        let url = cookie_server("cf_clearance=abc; Path=/; Domain=host; HttpOnly; Secure").await;
+        let fetcher = Fetcher::new("agent/1".into(), vec![], None).unwrap();
+        let snapshot = fetcher.get(&url, &[], deadline()).await.unwrap();
+        assert_eq!(snapshot.set_cookies.len(), 1);
+        let cookie = &snapshot.set_cookies[0];
+        assert_eq!(cookie.name, "cf_clearance");
+        assert_eq!(cookie.value, "abc");
+        assert_eq!(cookie.domain, "host");
+        assert!(cookie.http_only);
+        assert!(cookie.secure);
     }
 
     #[tokio::test]
