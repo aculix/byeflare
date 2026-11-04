@@ -1,0 +1,3 @@
+# One indexer URL per line. Use the sites Prowlarr fails on today.
+# Two or three is enough, and each one adds a lot of attempts.
+https://indexer.example/
