@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod detect;
 pub mod domain;
 pub mod proxy;
