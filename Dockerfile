@@ -3,7 +3,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends cmake clang lib
 WORKDIR /src
 COPY . .
 RUN git clone --filter=blob:none https://github.com/chris124567/cfsolve vendor/cfsolve \
- && git -C vendor/cfsolve checkout ee4031fc9eb65702718f7ffbfedb451ad6bba541 \
+ && git -C vendor/cfsolve checkout 6ec4412f1933c4b4d0600fd7db873fc4130b3133 \
  && cargo build --release
 
 FROM debian:bookworm-slim

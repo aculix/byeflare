@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-rev=ee4031fc9eb65702718f7ffbfedb451ad6bba541
+rev=6ec4412f1933c4b4d0600fd7db873fc4130b3133
 dest=vendor/cfsolve
 if [ ! -d "$dest/.git" ]; then
   mkdir -p vendor
