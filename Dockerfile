@@ -3,8 +3,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends cmake clang lib
 WORKDIR /src
 COPY . .
 RUN git clone --filter=blob:none https://github.com/chris124567/cfsolve vendor/cfsolve \
- && git -C vendor/cfsolve checkout 6ec4412f1933c4b4d0600fd7db873fc4130b3133 \
- && cargo build --release
+ && git -C vendor/cfsolve checkout 6ec4412f1933c4b4d0600fd7db873fc4130b3133
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY engine-bench/Cargo.toml engine-bench/
+# Compile the dependency graph once, so source-only changes reuse this layer.
+RUN mkdir -p src engine-bench/src \
+ && echo "fn main() {}" > src/main.rs && : > src/lib.rs \
+ && echo "fn main() {}" > engine-bench/src/main.rs \
+ && cargo build --release -p byeflare
+COPY src ./src
+RUN touch src/main.rs src/lib.rs && cargo build --release -p byeflare
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
