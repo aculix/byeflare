@@ -33,7 +33,12 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&config.bind)
         .await
         .with_context(|| format!("binding {}", config.bind))?;
-    println!("Waiting idle. byeflare on http://{}", config.bind);
+    println!(
+        "Waiting idle. byeflare {} on http://{} with profile {}",
+        env!("CARGO_PKG_VERSION"),
+        config.bind,
+        config.profile.display()
+    );
     axum::serve(listener, app(state)).await?;
     Ok(())
 }

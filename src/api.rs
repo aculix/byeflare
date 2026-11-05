@@ -140,6 +140,10 @@ impl Reply {
         })
     }
 
+    fn elapsed(&self) -> u128 {
+        millis().saturating_sub(self.start)
+    }
+
     fn error(self, state: &AppState, message: impl Into<String>) -> Json<Envelope> {
         Json(Envelope {
             status: "error",
@@ -166,6 +170,7 @@ async fn index() -> &'static str {
 }
 
 async fn ping(State(state): State<Arc<AppState>>) -> Json<Envelope> {
+    eprintln!("byeflare: <- ping");
     Reply::new().ok(&state, None)
 }
 
@@ -186,7 +191,10 @@ async fn v1(State(state): State<Arc<AppState>>, Json(request): Json<V1Request>) 
             Json(envelope)
         }
         "sessions.destroy" => Json(reply.ok(&state, None).0),
-        other => reply.error(&state, format!("Unknown command: {other}")),
+        other => {
+            eprintln!("byeflare: <- unknown command {other}");
+            reply.error(&state, format!("Unknown command: {other}"))
+        }
     }
 }
 
@@ -228,11 +236,50 @@ async fn request_page(state: &AppState, request: V1Request, reply: Reply) -> Jso
         deadline: Instant::now() + timeout,
     };
 
+    log(
+        &url,
+        &format!(
+            "<- {} maxTimeout={}s proxy={}",
+            request.cmd,
+            timeout.as_secs(),
+            proxy.as_deref().unwrap_or("direct")
+        ),
+    );
+
     let (status, body, mut cookies) = match obtain(state, &target, &key).await {
         Ok(page) => (page.status, page.body, page.cookies),
         Err(error) => {
-            log(&url, &describe(&error));
-            return reply.error(state, describe(&error));
+            let message = describe(&error);
+            log(&url, &format!("solve failed: {message}"));
+            // Prowlarr only moves on with cookies, so hand back whatever the
+            // plain page is rather than hiding it behind an empty error.
+            let fallback = Target {
+                url: target.url.clone(),
+                proxy: target.proxy.clone(),
+                deadline: Instant::now() + Duration::from_secs(10),
+            };
+            let Ok(page) = fetch(state, &fallback, &[]).await else {
+                log(
+                    &url,
+                    &format!("-> error after {} ms: {message}", reply.elapsed()),
+                );
+                return reply.error(state, message);
+            };
+            let mut cookies = page.cookies;
+            ensure_cookies(&mut cookies, &host);
+            log(
+                &url,
+                &format!(
+                    "-> fallback page {} ({} cookies) after {} ms",
+                    page.status,
+                    cookies.len(),
+                    reply.elapsed()
+                ),
+            );
+            return reply.ok(
+                state,
+                Some(solution(state, page.url, page.status, page.body, cookies)),
+            );
         }
     };
     ensure_cookies(&mut cookies, &host);
@@ -265,12 +312,31 @@ async fn request_page(state: &AppState, request: V1Request, reply: Reply) -> Jso
             }
         };
         let cookies = merge(&cookies, page.set_cookies);
+        log(
+            &url,
+            &format!(
+                "-> posted {} ({} cookies) after {} ms",
+                page.status,
+                cookies.len(),
+                reply.elapsed()
+            ),
+        );
         return reply.ok(
             state,
             Some(solution(state, page.url, page.status, page.body, cookies)),
         );
     }
 
+    log(
+        &url,
+        &format!(
+            "-> got {} ({} cookies, {} bytes) after {} ms",
+            status,
+            cookies.len(),
+            body.len(),
+            reply.elapsed()
+        ),
+    );
     reply.ok(state, Some(solution(state, url, status, body, cookies)))
 }
 
@@ -331,7 +397,9 @@ async fn solve(
         .await
         .map_err(|error| SolveError::Network(error.to_string()))?;
     let expires = Instant::now() + Duration::from_secs(30 * 60);
-    state
+    eprintln!("byeflare: solving {key}");
+    let started = Instant::now();
+    let result = state
         .cache
         .get_or_solve(
             state.solver.as_ref(),
@@ -340,7 +408,19 @@ async fn solve(
             expires,
             state.limits.max_solve,
         )
-        .await
+        .await;
+    match &result {
+        Ok(cookies) => eprintln!(
+            "byeflare: solved {key} ({} cookies) in {} ms",
+            cookies.len(),
+            started.elapsed().as_millis()
+        ),
+        Err(error) => eprintln!(
+            "byeflare: solve of {key} failed in {} ms: {error:?}",
+            started.elapsed().as_millis()
+        ),
+    }
+    result
 }
 
 fn clone_target(target: &Target) -> Target {

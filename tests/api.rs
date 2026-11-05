@@ -312,8 +312,10 @@ async fn not_challenged_returns_the_plain_page() {
     assert_eq!(response["solution"]["response"], "results");
 }
 
+/// A failed solve still hands back the page, because Prowlarr gives up on an
+/// empty cookie set before it ever replays.
 #[tokio::test]
-async fn unsupported_becomes_an_error_envelope() {
+async fn a_failed_solve_falls_back_to_the_plain_page() {
     let target = origin().await;
     let (solver, _) = fake(Behaviour::Fail(SolveError::Unsupported("new build".into())));
     let url = start(solver, Cache::new(8)).await;
@@ -322,8 +324,14 @@ async fn unsupported_becomes_an_error_envelope() {
         serde_json::json!({"cmd": "request.get", "url": target, "maxTimeout": 5000}),
     )
     .await;
-    assert_eq!(response["status"], "error");
-    assert!(response["message"].as_str().unwrap().contains("new build"));
+    assert_eq!(response["status"], "ok");
+    assert!(
+        response["solution"]["response"]
+            .as_str()
+            .unwrap()
+            .contains("Just a moment")
+    );
+    assert_eq!(response["solution"]["cookies"][0]["name"], "byeflare");
 }
 
 #[tokio::test]
