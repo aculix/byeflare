@@ -59,7 +59,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
-          outputs: ${{ github.event_name == 'pull_request' && 'type=image' || 'type=image,push-by-digest=true,name-canonical=true,push=true' }}
+          outputs: ${{ github.event_name == 'pull_request' && 'type=image' || format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) }}
 
       - name: Stage the digest
         if: github.event_name != 'pull_request'
