@@ -31,6 +31,14 @@ cargo run
 
 Requires Rust 1.98.0 (see `rust-toolchain.toml`), CMake, clang/libclang, and git.
 
+## Container image
+
+`main` publishes `ghcr.io/aculix/byeflare:latest` for amd64 and arm64.
+
+```bash
+docker run -p 8191:8191 ghcr.io/aculix/byeflare:latest
+```
+
 ## Configuration
 
 | Variable | Default | Meaning |
