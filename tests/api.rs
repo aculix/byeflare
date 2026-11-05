@@ -24,12 +24,12 @@ struct Fake {
 
 #[async_trait]
 impl Solver for Fake {
-    async fn clear(&self, _target: &Target) -> Result<Cleared, SolveError> {
+    async fn clear(&self, target: &Target) -> Result<Cleared, SolveError> {
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
         match &self.behaviour {
             Behaviour::FailFirst(error) if call == 0 => Err(error.clone()),
             Behaviour::Solve | Behaviour::FailFirst(_) => Ok(Cleared {
-                url: "https://example/".into(),
+                url: target.url.clone(),
                 status: 200,
                 body: String::new(),
                 cookies: vec![cookie()],
@@ -274,15 +274,20 @@ async fn a_stale_cookie_is_detected_and_replaced() {
     cache
         .insert(
             format!("{host}|-"),
-            vec![NamedCookie {
-                name: "stale".into(),
-                value: "x".into(),
-                domain: "host".into(),
-                path: "/".into(),
-                expires: None,
-                http_only: false,
-                secure: false,
-            }],
+            Cleared {
+                url: target.clone(),
+                status: 200,
+                body: String::new(),
+                cookies: vec![NamedCookie {
+                    name: "stale".into(),
+                    value: "x".into(),
+                    domain: "host".into(),
+                    path: "/".into(),
+                    expires: None,
+                    http_only: false,
+                    secure: false,
+                }],
+            },
             std::time::Instant::now() + Duration::from_secs(60),
         )
         .await;

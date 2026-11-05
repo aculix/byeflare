@@ -18,7 +18,7 @@ pub struct NamedCookie {
     pub secure: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Cleared {
     pub url: String,
     pub status: u16,

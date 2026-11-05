@@ -1,4 +1,4 @@
-use crate::domain::{Cleared, NamedCookie, SolveError, Target};
+use crate::domain::{Cleared, SolveError, Target};
 use crate::solver::Solver;
 use lru::LruCache;
 use std::collections::HashMap;
@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, MutexGuard};
 
 struct Entry {
-    cookies: Vec<NamedCookie>,
+    cleared: Cleared,
     expires: Instant,
 }
 
@@ -25,10 +25,10 @@ impl Cache {
         }
     }
 
-    pub async fn get(&self, key: &str) -> Option<Vec<NamedCookie>> {
+    pub async fn get(&self, key: &str) -> Option<Cleared> {
         let mut entries = self.entries.lock().await;
         match entries.get(key) {
-            Some(entry) if entry.expires > Instant::now() => Some(entry.cookies.clone()),
+            Some(entry) if entry.expires > Instant::now() => Some(entry.cleared.clone()),
             Some(_) => {
                 entries.pop(key);
                 None
@@ -37,11 +37,11 @@ impl Cache {
         }
     }
 
-    pub async fn insert(&self, key: String, cookies: Vec<NamedCookie>, expires: Instant) {
+    pub async fn insert(&self, key: String, cleared: Cleared, expires: Instant) {
         self.entries
             .lock()
             .await
-            .put(key, Entry { cookies, expires });
+            .put(key, Entry { cleared, expires });
     }
 
     pub async fn invalidate(&self, key: &str) {
@@ -62,20 +62,20 @@ impl Cache {
         target: Target,
         expires: Instant,
         max_solve: Duration,
-    ) -> Result<Vec<NamedCookie>, SolveError> {
-        if let Some(cookies) = self.get(key).await {
-            return Ok(cookies);
+    ) -> Result<Cleared, SolveError> {
+        if let Some(cleared) = self.get(key).await {
+            return Ok(cleared);
         }
         let gate = self.gate(key).await;
         let _guard: MutexGuard<'_, ()> = gate.lock().await;
-        if let Some(cookies) = self.get(key).await {
-            return Ok(cookies);
+        if let Some(cleared) = self.get(key).await {
+            return Ok(cleared);
         }
         let solved = tokio::time::timeout(max_solve, solver.clear(&target)).await;
         match solved {
-            Ok(Ok(Cleared { cookies, .. })) => {
-                self.insert(key.to_string(), cookies.clone(), expires).await;
-                Ok(cookies)
+            Ok(Ok(cleared)) => {
+                self.insert(key.to_string(), cleared.clone(), expires).await;
+                Ok(cleared)
             }
             Ok(Err(error)) => Err(error),
             Err(_) => Err(SolveError::Network("solve timed out".into())),
@@ -86,6 +86,7 @@ impl Cache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::NamedCookie;
     use crate::solver::Solver;
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -144,8 +145,8 @@ mod tests {
     #[tokio::test]
     async fn insert_then_get_returns_cookies() {
         let cache = Cache::new(8);
-        cache.insert("k".into(), cookies(), later()).await;
-        assert_eq!(cache.get("k").await, Some(cookies()));
+        cache.insert("k".into(), solved(), later()).await;
+        assert_eq!(cache.get("k").await.map(|cleared| cleared.cookies), Some(cookies()));
     }
 
     #[tokio::test]
@@ -154,7 +155,7 @@ mod tests {
         cache
             .insert(
                 "k".into(),
-                cookies(),
+                solved(),
                 Instant::now() - Duration::from_secs(1),
             )
             .await;
@@ -164,10 +165,10 @@ mod tests {
     #[tokio::test]
     async fn the_cap_evicts_least_recent() {
         let cache = Cache::new(2);
-        cache.insert("a".into(), cookies(), later()).await;
-        cache.insert("b".into(), cookies(), later()).await;
+        cache.insert("a".into(), solved(), later()).await;
+        cache.insert("b".into(), solved(), later()).await;
         cache.get("a").await;
-        cache.insert("c".into(), cookies(), later()).await;
+        cache.insert("c".into(), solved(), later()).await;
         assert!(cache.get("b").await.is_none());
         assert!(cache.get("a").await.is_some());
     }
@@ -175,7 +176,7 @@ mod tests {
     #[tokio::test]
     async fn invalidate_removes() {
         let cache = Cache::new(8);
-        cache.insert("k".into(), cookies(), later()).await;
+        cache.insert("k".into(), solved(), later()).await;
         cache.invalidate("k").await;
         assert!(cache.get("k").await.is_none());
     }
@@ -190,7 +191,7 @@ mod tests {
             cache.get_or_solve(&solver, "k", target(), later(), Duration::from_secs(5)),
         );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert_eq!(a.unwrap(), b.unwrap());
+        assert_eq!(a.unwrap().cookies, b.unwrap().cookies);
     }
 
     #[tokio::test]

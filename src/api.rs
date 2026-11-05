@@ -348,41 +348,64 @@ struct Page {
 }
 
 async fn obtain(state: &AppState, target: &Target, key: &str) -> Result<Page, SolveError> {
-    if let Some(cookies) = state.cache.get(key).await {
-        let page = fetch(state, target, &cookies).await?;
-        if !is_challenged(&page.body) {
-            return Ok(Page { cookies, ..page });
+    if let Some(cleared) = state.cache.get(key).await {
+        if let Ok(page) = fetch(state, &on_url(target, &cleared.url), &cleared.cookies).await {
+            if !is_challenged(&page.body) {
+                return Ok(page);
+            }
         }
         state.cache.invalidate(key).await;
     }
 
     match solve(state, target, key).await {
-        Ok(cookies) => {
-            let page = fetch(state, target, &cookies).await?;
-            if !is_challenged(&page.body) {
-                return Ok(Page { cookies, ..page });
-            }
-            state.cache.invalidate(key).await;
-            let cookies = solve(state, target, key).await?;
-            let page = fetch(state, target, &cookies).await?;
-            if is_challenged(&page.body) {
-                return Err(SolveError::Challenged(page.status));
-            }
-            Ok(Page { cookies, ..page })
+        Ok(cleared) => {
+            // The solver hands back the page it cleared. A fresh fetch proves the
+            // clearance works for another client, but its refusal is no reason to
+            // fail: Prowlarr replays on its own and only needs the cookies.
+            let allowed = on_url(target, &cleared.url);
+            let page = match fetch(state, &allowed, &cleared.cookies).await {
+                Ok(page) if !is_challenged(&page.body) => page,
+                page => {
+                    log(
+                        &target.url,
+                        &format!(
+                            "replay still challenged ({}), keeping the solved page",
+                            page.map(|page| page.status.to_string())
+                                .unwrap_or_else(|_| "unreachable".into())
+                        ),
+                    );
+                    Page {
+                        url: cleared.url,
+                        status: cleared.status,
+                        body: cleared.body,
+                        cookies: cleared.cookies,
+                    }
+                }
+            };
+            Ok(page)
         }
         Err(SolveError::NotChallenged) | Err(SolveError::Blocked(_)) => {
             let page = fetch(state, target, &[]).await?;
             if !is_challenged(&page.body) {
                 return Ok(page);
             }
-            let cookies = solve(state, target, key).await?;
-            let page = fetch(state, target, &cookies).await?;
+            let cleared = solve(state, target, key).await?;
+            let page = fetch(state, target, &cleared.cookies).await?;
             if is_challenged(&page.body) {
-                return Err(SolveError::Challenged(page.status));
+                log(&target.url, "still challenged after a second solve");
             }
-            Ok(Page { cookies, ..page })
+            Ok(page)
         }
         Err(error) => Err(error),
+    }
+}
+
+/// The same target aimed at another page, for the address the solver settled on.
+fn on_url(target: &Target, url: &str) -> Target {
+    Target {
+        url: url.to_string(),
+        proxy: target.proxy.clone(),
+        deadline: target.deadline,
     }
 }
 
@@ -390,7 +413,7 @@ async fn solve(
     state: &AppState,
     target: &Target,
     key: &str,
-) -> Result<Vec<NamedCookie>, SolveError> {
+) -> Result<Cleared, SolveError> {
     let _permit = state
         .inflight
         .acquire()
@@ -410,9 +433,10 @@ async fn solve(
         )
         .await;
     match &result {
-        Ok(cookies) => eprintln!(
-            "byeflare: solved {key} ({} cookies) in {} ms",
-            cookies.len(),
+        Ok(cleared) => eprintln!(
+            "byeflare: solved {key} ({} cookies) at {} in {} ms",
+            cleared.cookies.len(),
+            cleared.url,
             started.elapsed().as_millis()
         ),
         Err(error) => eprintln!(
