@@ -4,10 +4,12 @@ use crate::domain::{Cleared, NamedCookie, SolveError, Target};
 use crate::fetch::Snapshot;
 use crate::proxy;
 use crate::solver::Solver;
-use axum::extract::State;
+use axum::extract::{ConnectInfo, FromRequestParts, State};
+use axum::http::request::Parts;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
@@ -174,10 +176,32 @@ async fn ping(State(state): State<Arc<AppState>>) -> Json<Envelope> {
     Reply::new().ok(&state, None)
 }
 
-async fn v1(State(state): State<Arc<AppState>>, Json(request): Json<V1Request>) -> Json<Envelope> {
+/// The caller's address, when the server carries connect info. Tests serve without it.
+struct Peer(Option<std::net::IpAddr>);
+
+impl<S: Send + Sync> FromRequestParts<S> for Peer {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
+        Ok(Self(
+            parts
+                .extensions
+                .get::<ConnectInfo<SocketAddr>>()
+                .map(|ConnectInfo(address)| address.ip()),
+        ))
+    }
+}
+
+async fn v1(
+    State(state): State<Arc<AppState>>,
+    Peer(peer): Peer,
+    Json(request): Json<V1Request>,
+) -> Json<Envelope> {
     let reply = Reply::new();
     match request.cmd.as_str() {
-        "request.get" | "request.post" => request_page(&state, request, reply).await,
+        "request.get" | "request.post" => {
+            request_page(&state, request, reply, peer.map(|ip| ip.to_string())).await
+        }
         "sessions.create" => {
             let mut envelope = reply.ok(&state, None).0;
             let id = Uuid::new_v4().to_string();
@@ -198,7 +222,12 @@ async fn v1(State(state): State<Arc<AppState>>, Json(request): Json<V1Request>) 
     }
 }
 
-async fn request_page(state: &AppState, request: V1Request, reply: Reply) -> Json<Envelope> {
+async fn request_page(
+    state: &AppState,
+    request: V1Request,
+    reply: Reply,
+    peer: Option<String>,
+) -> Json<Envelope> {
     let Some(url) = request.url.clone() else {
         return reply.error(state, "Missing url");
     };
@@ -239,10 +268,11 @@ async fn request_page(state: &AppState, request: V1Request, reply: Reply) -> Jso
     log(
         &url,
         &format!(
-            "<- {} maxTimeout={}s proxy={}",
+            "<- {} maxTimeout={}s proxy={} from={}",
             request.cmd,
             timeout.as_secs(),
-            proxy.as_deref().unwrap_or("direct")
+            proxy.as_deref().unwrap_or("direct"),
+            peer.as_deref().unwrap_or("-")
         ),
     );
 

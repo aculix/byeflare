@@ -39,6 +39,10 @@ async fn main() -> anyhow::Result<()> {
         config.bind,
         config.profile.display()
     );
-    axum::serve(listener, app(state)).await?;
+    axum::serve(
+        listener,
+        app(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
