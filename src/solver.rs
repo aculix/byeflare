@@ -56,6 +56,7 @@ impl Solver for CfsolveSolver {
             .map_err(|error| SolveError::Config(error.to_string()))?;
         let options = cfsolve::Options {
             proxy: target.proxy.clone(),
+            trusted_root: None,
             sink: None,
         };
         let clearance = self

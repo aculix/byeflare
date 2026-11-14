@@ -2,8 +2,7 @@ FROM rust:1.98.0-bookworm AS build
 RUN apt-get update && apt-get install -y --no-install-recommends cmake clang libclang-dev git && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY . .
-RUN git clone --filter=blob:none https://github.com/chris124567/cfsolve vendor/cfsolve \
- && git -C vendor/cfsolve checkout 6ec4412f1933c4b4d0600fd7db873fc4130b3133
+RUN bash scripts/fetch-cfsolve.sh
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY engine-bench/Cargo.toml engine-bench/
 # Compile the dependency graph once, so source-only changes reuse this layer.
